@@ -1,0 +1,76 @@
+version: '3.1'
+networks:
+  reverse_proxy:
+    external: true
+  default:
+    name: wp-${PREFIX}
+volumes:
+  wordpress:
+    name: wp-${PREFIX}-data
+  db:
+    name: wp-${PREFIX}-db
+  redis:
+    name: wp-${PREFIX}-cache
+services:
+  wordpress:
+    container_name: wp-${PREFIX}-wordpress
+    image: registry.kinteso.ch/wordpress:v1.0
+    restart: unless-stopped
+    healthcheck:
+      test: grep -hv 'local_address' /proc/net/tcp6 /proc/net/tcp | awk 'function hextodec(str,ret,n,i,k,c){ret = 0;n = length(str);for (i = 1; i <= n; i++) {c = tolower(substr(str, i, 1));k = index("123456789abcdef", c);ret = ret * 16 + k}return ret} {print hextodec(substr($$2,index($$2,":")+1,4))}' | grep 9000 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 50s
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: ${DB_USER}
+      WORDPRESS_DB_PASSWORD: ${DB_PASS}
+      WORDPRESS_DB_NAME: ${DB_NAME}
+    volumes:
+      - wordpress:/var/www/html
+    networks:
+      - reverse_proxy
+      - default
+    labels:
+      #caddy: "${DOMAIN_NAME}${WWW_DOMAIN}"
+      caddy: "${DEV}"
+      caddy.import: "tls_default"
+      caddy.reverse_proxy: "{{upstreams 80}}"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+  db:
+    container_name: wp-${PREFIX}-db
+    image: mariadb:11.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--su-mysql", "--connect"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASS}
+      MARIADB_RANDOM_ROOT_PASSWORD: '1'
+      MARIADB_MYSQL_LOCALHOST_USER: '1' 
+    volumes:
+      - db:/var/lib/mysql
+    networks:
+      - default
+  cache:
+    container_name: wp-${PREFIX}-cache
+    image: redis:7.0-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis:/data
+    networks:
+      - default
